@@ -16,6 +16,19 @@ import (
 )
 
 func main() {
+	envs := []string{
+		"UPSTASH_USER",
+		"UPSTASH_PASS",
+		"UPSTASH_URL",
+		"UPSTASH_TOPIC",
+		"SHOPIFY_SHARED_SECRET",
+	}
+
+	for _, env := range envs {
+		if os.Getenv(env) == "" {
+			log.Fatalf("Error: missing %s", env)
+		}
+	}
 
 	mechanism, err := scram.Mechanism(scram.SHA256, os.Getenv("UPSTASH_USER"), os.Getenv("UPSTASH_PASS"))
 	if err != nil {
