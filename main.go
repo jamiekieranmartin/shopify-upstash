@@ -49,7 +49,6 @@ func main() {
 
 	defer r.Close()
 
-	fmt.Println("start consuming ... !!")
 	for {
 		m, err := r.ReadMessage(context.Background())
 		if err != nil {
