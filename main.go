@@ -1,57 +1,74 @@
 package main
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
+	"log"
 	"os"
-	"os/signal"
-	"syscall"
+
+	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/scram"
 )
 
 func main() {
-	// Create a new session using the DISCORD_TOKEN environment variable from Railway
-	dg, err := discordgo.New("Bot " + os.Getenv("DISCORD_TOKEN"))
+
+	mechanism, err := scram.Mechanism(scram.SHA256, os.Getenv("UPSTASH_USER"), os.Getenv("UPSTASH_PASS"))
 	if err != nil {
-		fmt.Printf("Error while starting bot: %s", err)
-		return
+		log.Fatalln(err)
 	}
 
-	// Add the message handler
-	dg.AddHandler(messageCreate)
-
-	// Add the Guild Messages intent
-	dg.Identify.Intents = discordgo.IntentsGuildMessages
-
-	// Connect to the gateway
-	err = dg.Open()
-	if err != nil {
-		fmt.Printf("Error while connecting to gateway: %s", err)
-		return
+	dialer := &kafka.Dialer{
+		SASLMechanism: mechanism,
+		TLS:           &tls.Config{},
 	}
 
-	// Wait until Ctrl+C or another signal is received
-	fmt.Println("The bot is now running. Press Ctrl+C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
-	<-sc
+	r := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{os.Getenv("UPSTASH_URL")},
+		GroupID: "$GROUP_NAME",
+		Topic:   "products-update",
+		Dialer:  dialer,
+	})
 
-	// Close the Discord session
-	dg.Close()
+	defer r.Close()
+
+	fmt.Println("start consuming ... !!")
+	for {
+		m, err := r.ReadMessage(context.Background())
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		if !verify(m) {
+			fmt.Println("message failed verification")
+			continue
+		}
+
+		fmt.Printf("message at topic:%v partition:%v offset:%v	%s = %s\n", m.Topic, m.Partition, m.Offset, string(m.Key), string(m.Value))
+	}
 }
 
-func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Don't proceed if the message author is a bot
-	if m.Author.Bot {
-		return
+func verify(m kafka.Message) bool {
+	key := os.Getenv("SHOPIFY_SHARED_SECRET")
+
+	headers := map[string]string{}
+	for _, header := range m.Headers {
+		headers[header.Key] = string(header.Value)
 	}
 
-	if m.Content == "ping" {
-		s.ChannelMessageSend(m.ChannelID, "Pong 🏓")
-		return
+	shmac := headers["X-Shopify-Hmac-Sha256"]
+	shop := headers["X-Shopify-Shop-Domain"]
+
+	if shop == "" {
+		return false
 	}
 
-	if m.Content == "hello" {
-		s.ChannelMessageSend(m.ChannelID, "Choo choo! 🚅")
-		return
-	}
+	h := hmac.New(sha256.New, []byte(key))
+	h.Write(m.Value)
+	enc := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+	return enc == shmac
 }
