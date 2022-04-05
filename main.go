@@ -29,7 +29,7 @@ func main() {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{os.Getenv("UPSTASH_URL")},
 		GroupID: "$GROUP_NAME",
-		Topic:   "products-update",
+		Topic:   os.Getenv("UPSTASH_TOPIC"),
 		Dialer:  dialer,
 	})
 
